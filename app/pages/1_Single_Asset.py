@@ -14,6 +14,7 @@ from single_asset import (
     signal_buy_and_hold,
     signal_moving_average,
     backtest,
+    periods_per_year,
     sharpe_ratio,
     max_drawdown,
     annualised_return,
@@ -49,6 +50,7 @@ asset_label = st.sidebar.selectbox(
     index=0
 )
 asset = asset_map[asset_label]
+asset_class = "crypto" if asset.endswith("-USD") else "equity"
 
 # Periodicity
 periodicity = st.sidebar.selectbox(
@@ -170,11 +172,13 @@ with tab_backtest:
     st.subheader("Metrics")
     c1, c2, c3, c4 = st.columns(4)
 
-    # choose annualization factor based on interval (adapt this mapping to your UI)
-    c1.metric("Sharpe Ratio", f"{sharpe_ratio(strat_returns, interval=interval):.3f}")
+    ppyear = periods_per_year(interval=interval, asset_class=asset_class)
+
+    # choose annualization factor based on interval
+    c1.metric("Sharpe Ratio", f"{sharpe_ratio(strat_returns, periods_per_year=ppyear):.3f}")
     c2.metric("Max Drawdown", f"{max_drawdown(equity):.2%}")
-    c3.metric("Annualised return", f"{annualised_return(strat_returns, interval=interval):.2%}")
-    c4.metric("Annualised volatility", f"{annualised_volatility(strat_returns, interval=interval):.2%}")
+    c3.metric("Annualised return (CAGR)", f"{annualised_return(equity):.2%}")
+    c4.metric("Annualised volatility", f"{annualised_volatility(strat_returns, periods_per_year=ppyear):.2%}")
 
 # ---------------------------------------------------
 # Tab 3 — Forecast
