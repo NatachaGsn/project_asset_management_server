@@ -1,7 +1,13 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+
 import os
 import sys
 import plotly.graph_objects as go
+from datetime import datetime
+
+# Auto refresh every 5 minutes
+st_autorefresh(interval=5 * 60 * 1000, key="refresh_single_asset_5min")
 
 # Ajoute la racine du projet pour autoriser "import single_asset"
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -99,14 +105,21 @@ data = canonicalise_price_data(raw_data)
 # Tabs
 # ---------------------------------------------------
 
-tab_price, tab_backtest, tab_forecast = st.tabs(["📈 Price", "📊 Backtest", "🔮 Forecast"])
+tab = st.segmented_control(
+    label="Navigation",
+    options=["📈 Price", "📊 Backtest", "🔮 Forecast"],
+    default="📈 Price",
+    key="active_tab",
+    label_visibility="collapsed",
+)
+
 
 # ---------------------------------------------------
 # Tab 1 - Price
 # ---------------------------------------------------
 
 # Display the price
-with tab_price:
+if tab == "📈 Price":
     st.subheader(f"Asset price {asset_label}")
     
     data_plot = data.copy()
@@ -118,7 +131,7 @@ with tab_price:
 # Tab 2 - Backtesting 
 # ---------------------------------------------------
 
-with tab_backtest:
+elif tab == "📊 Backtest":
     st.subheader("Strategy parameters")
     
     # Strategy choice
@@ -186,7 +199,7 @@ with tab_backtest:
 # Tab 3 — Forecast
 # ---------------------------------------------------
 
-with tab_forecast:
+else: # "🔮 Forecast"
     st.subheader("Forecast (ARIMA)")
 
     col1, col2, col3 = st.columns(3)
@@ -351,3 +364,7 @@ with tab_forecast:
     )
 
     st.plotly_chart(fig, width="stretch")
+
+
+
+st.caption(f"🔄 Market data is automatically refreshed every 5 minutes. ")

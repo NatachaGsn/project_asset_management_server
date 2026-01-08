@@ -3,10 +3,13 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
+import streamlit as st
 # ------------------------------------
 # Data
 # ------------------------------------
 
+# autorise reload only every 5 minutes
+@st.cache_data(ttl=300)
 def load_asset(asset: str,
                start: str = None,
                end: str = None,
