@@ -31,9 +31,50 @@ def load_asset(asset: str,
 
     return df.dropna()
 
+def canonicalise_price_data(df: DataFrame) -> Series:
+    """
+    Convert raw loaded asset data into a canonical 1D price series.
+
+    This function guarantees:
+    - a pandas Series
+    - float dtype
+    - datetime index
+    - no duplicated timestamps
+    - sorted index
+
+    Parameters
+    ----------
+    df : DataFrame
+        DataFrame containing a 'price' column.
+
+    Returns
+    -------
+    Series
+        Clean price series ready for all downstream computations.
+    """
+    
+
+    price = df["price"]
+
+    # If price is accidentally a DataFrame (1 column), flatten it
+    if isinstance(price, pd.DataFrame):
+        price = price.iloc[:, 0]
+
+    if not isinstance(price, Series):
+        raise TypeError("Price must be a pandas Series after extraction.")
+
+    price = price.astype(float)
+    price.index = pd.to_datetime(price.index)
+
+    price = price[~price.index.duplicated(keep="last")]
+    price = price.sort_index()
+    price = price.dropna()
+
+    return price
+
 # ---------- Signals (strategies output ONLY signals) ----------
 
-def signal_buy_and_hold(df: DataFrame) -> Series:
+def signal_buy_and_hold(price: Series) -> Series:
     """
     Generate trading signals for a Buy & Hold strategy.
 
@@ -41,18 +82,22 @@ def signal_buy_and_hold(df: DataFrame) -> Series:
 
     Parameters
     ----------
-    df : DataFrame
-        DataFrame indexed by datetime and containing a 'price' column.
+    price : Series
+        Asset price series indexed by datetime.
 
     Returns
     -------
     Series
-        Signal series (+1 for long), indexed like df.
+        Signal series (+1 for long), indexed like price.
     """
-    return pd.Series(1, index=df.index, name="signal")
+    signal = Series(1, index=price.index, name="signal")
+    return signal
 
-
-def signal_moving_average(df: DataFrame, short_window: int = 20, long_window: int = 50) -> Series:
+def signal_moving_average(
+    price: Series,
+    short_window: int = 20,
+    long_window: int = 50
+) -> Series:
     """
     Generate trading signals using a moving-average crossover strategy.
 
@@ -60,8 +105,8 @@ def signal_moving_average(df: DataFrame, short_window: int = 20, long_window: in
 
     Parameters
     ----------
-    df : DataFrame
-        DataFrame indexed by datetime and containing a 'price' column.
+    price : Series
+        Asset price series indexed by datetime.
     short_window : int
         Short moving average window.
     long_window : int
@@ -70,53 +115,48 @@ def signal_moving_average(df: DataFrame, short_window: int = 20, long_window: in
     Returns
     -------
     Series
-        Signal series (+1 for long, 0 for flat), indexed like df.
+        Signal series (+1 for long, 0 for flat), indexed like price.
     """
-    price = df["price"].astype(float)
+    price = price.astype(float)
+
     short_ma = price.rolling(window=short_window).mean()
     long_ma = price.rolling(window=long_window).mean()
+
     signal = (short_ma > long_ma).astype(int)
     signal.name = "signal"
-    return signal
 
+    return signal
 
 # ---------- Backtest engine (common for all strategies) ----------
 
-def backtest(df: DataFrame, signal: Series) -> tuple[Series, Series]:
+def backtest(price: Series, signal: Series) -> tuple[Series, Series]:
     """
-    Backtest a strategy from a price series and a signal series.
+    Backtest a trading strategy from a price series and a signal series.
 
     The signal is shifted by one period to avoid look-ahead bias.
 
     Parameters
     ----------
-    df : DataFrame
-        DataFrame indexed by datetime and containing a 'price' column.
+    price : Series
+        Asset price series indexed by datetime.
     signal : Series
-        Signal series (+1 for long, 0 for flat), indexed like df.
+        Signal series (+1 for long, 0 for flat), indexed like price.
 
     Returns
     -------
     equity : Series
-        Cumulative equity curve (base 1), indexed like df.
+        Cumulative equity curve (base 1), indexed like price.
     strategy_returns : Series
-        Period returns of the strategy, indexed like df.
+        Period returns of the strategy, indexed like price.
     """
-    # --- Force price to be a Series (robust to 1-col DataFrame / MultiIndex issues) ---
-    price = df["price"]
-    if isinstance(price, pd.DataFrame):
-        price = price.iloc[:, 0]
+    # Ensure alignment
     price = price.astype(float)
-
-    # --- Force signal to be a Series aligned on df.index ---
-    if not isinstance(signal, Series):
-        signal = pd.Series(signal.squeeze(), index=df.index)
-    signal = signal.reindex(df.index).fillna(0.0).astype(float)
+    signal = signal.reindex(price.index).fillna(0.0).astype(float)
 
     asset_returns = price.pct_change().fillna(0.0)
     position = signal.shift(1).fillna(0.0)
 
-    strategy_returns = (position * asset_returns)
+    strategy_returns = position * asset_returns
     strategy_returns.name = "strategy_returns"
 
     equity = (1.0 + strategy_returns).cumprod()
@@ -177,9 +217,6 @@ def sharpe_ratio(returns: Series,
     # risk free rate per period
     rf_per_period = risk_free_rate / periods_per_year
 
-    if not isinstance(returns, Series):
-        returns = pd.Series(returns.squeeze())
-
     r = (returns.astype(float) - rf_per_period).dropna()
 
     if r.empty:
@@ -191,32 +228,29 @@ def sharpe_ratio(returns: Series,
     
     return float((r.mean() / std) * np.sqrt(periods_per_year))
 
-
 def max_drawdown(equity: Series) -> float:
     """
     Compute the maximum drawdown of an equity curve.
+
     Parameters
     ----------
     equity : Series
-        Equity curve (base 1).
+        Equity curve (base 1), indexed by datetime.
 
     Returns
     -------
     float
         Maximum drawdown as a negative number (e.g. -0.25 for -25%).
     """
-    if not isinstance(equity, Series):
-        equity = pd.Series(equity.squeeze())
-
     eq = equity.astype(float).dropna()
 
-    if len(eq) == 0:
+    if eq.empty:
         return 0.0
-    
-    running_max = eq.cummax()
-    dd = (eq - running_max) / running_max
-    return float(dd.min())
 
+    running_max = eq.cummax()
+    drawdown = (eq / running_max) - 1.0
+
+    return float(drawdown.min())
 
 def annualised_return(returns: Series, interval: str) -> float:
     """
@@ -237,8 +271,6 @@ def annualised_return(returns: Series, interval: str) -> float:
     float
         Annualised return.
     """
-    if not isinstance(returns, Series):
-        returns = returns.squeeze()
 
     r = returns.astype(float).dropna()
     if r.empty:
@@ -252,6 +284,7 @@ def annualised_return(returns: Series, interval: str) -> float:
         return 0.0
 
     return total_return ** (1.0 / n_years) - 1.0
+
 
 def annualised_volatility(returns: Series, interval: str) -> float:
     """
@@ -272,9 +305,7 @@ def annualised_volatility(returns: Series, interval: str) -> float:
     float
         Annualised volatility.
     """
-    if not isinstance(returns, Series):
-        returns = returns.squeeze()
-
+    
     r = returns.astype(float).dropna()
     if r.empty:
         return 0.0
@@ -282,7 +313,7 @@ def annualised_volatility(returns: Series, interval: str) -> float:
     periods_per_year = periods_per_year_from_interval(interval)
     return r.std() * np.sqrt(periods_per_year)
 
-# Main plot
+# -------------------- Main plot ---------------------------
 def prepare_price_equity_plot(price: Series, equity: Series) -> DataFrame:
     """
     Prepare normalised price and equity series for joint plotting.
@@ -301,22 +332,11 @@ def prepare_price_equity_plot(price: Series, equity: Series) -> DataFrame:
     DataFrame
         DataFrame containing normalised price and equity (base 100).
     """
-    # Force 1D Series
-    if isinstance(price, pd.DataFrame):
-        price = price.squeeze()
-    if isinstance(equity, pd.DataFrame):
-        equity = equity.squeeze()
-
-    # If numpy arrays slip through
-    if not isinstance(price, Series):
-        price = pd.Series(price)
-    if not isinstance(equity, Series):
-        equity = pd.Series(equity)
 
     price = price.astype(float).dropna()
     equity = equity.astype(float).dropna()
 
-    # Align on common index (important if dropna changed lengths)
+    # Align on common index
     price, equity = price.align(equity, join="inner")
 
     df_plot = pd.DataFrame({
