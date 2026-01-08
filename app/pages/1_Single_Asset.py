@@ -22,7 +22,9 @@ from single_asset import (
     prepare_price_equity_plot
 )
 
-from single_asset_modelling import arima_forecast_split
+from single_asset_modelling import (
+    arima_forecast_split,
+    inverse_transform_for_display)
 
 # ---------------------------------------------------
 # Page title
@@ -240,56 +242,81 @@ with tab_forecast:
     st.dataframe(future_table, width="stretch")
 
     # ------------ chart --------------
-
     st.markdown("**Chart: historical, test prediction, and future forecast (interactive)**")
 
-    # Option: choose how much history to display
     show_full_history = st.checkbox("Show full history", value=False)
     if show_full_history:
         y_plot = y
     else:
-        # points = observations, works for both daily and weekly
-        max_pts = int(min(3000, len(y)))
-        default_pts = int(min(500, len(y)))
-        history_window = st.slider("History window (points)", 100, max_pts, default_pts, step=50)
+        max_pts = min(3000, len(y))
+        default_pts = min(500, len(y))
+        min_pts = min(100, max_pts)
+
+        if max_pts <= min_pts:   # covers 0/1 point edge cases too
+            history_window = max_pts
+            st.caption(f"Only {max_pts} points available — showing full history.")
+        else:
+            default_pts = max(min_pts, default_pts)
+            history_window = st.slider(
+                "History window (points)",
+                min_value=min_pts,
+                max_value=max_pts,
+                value=default_pts,
+                step=50 if max_pts >= 150 else 1
+            )
+
         y_plot = y.iloc[-history_window:]
 
-    xmin = y_plot.index.min()
+    xmin = y_plot.index[0]
 
-    # Restrict test & CI to visible window (prevents the big “cone” hiding everything)
+    transform = res["prep_info"]["transform"]
+
+    # Restrict test & CI to visible window
     y_test_plot = y_test[y_test.index >= xmin]
     pred_test_plot = pred_test[pred_test.index >= xmin]
     pred_test_ci_plot = pred_test_ci.loc[pred_test_ci.index >= xmin]
+
+    # Convert to price space for display (if needed)
+    y_plot_disp = inverse_transform_for_display(y_plot, transform)
+    y_test_plot_disp = inverse_transform_for_display(y_test_plot, transform)
+    pred_test_plot_disp = inverse_transform_for_display(pred_test_plot, transform)
+    pred_test_ci_plot_disp = inverse_transform_for_display(pred_test_ci_plot, transform)
+
+    forecast_future_disp = inverse_transform_for_display(forecast_future, transform)
+    forecast_future_ci_disp = inverse_transform_for_display(forecast_future_ci, transform)
+
+    # ------- Trace ---------
 
     fig = go.Figure()
 
     # Historical
     fig.add_trace(go.Scatter(
-        x=y_plot.index, y=y_plot.values,
+        x=y_plot_disp.index, y=y_plot_disp.values,
         mode="lines", name="Historical price"
     ))
 
     # Test actual
     fig.add_trace(go.Scatter(
-        x=y_test_plot.index, y=y_test_plot.values,
+        x=y_test_plot_disp.index, y=y_test_plot_disp.values,
         mode="lines", name="Actual (test)"
     ))
 
     # Test prediction
     fig.add_trace(go.Scatter(
-        x=pred_test_plot.index, y=pred_test_plot.values,
+        x=pred_test_plot_disp.index, y=pred_test_plot_disp.values,
         mode="lines", name="Prediction (test)"
     ))
 
     # Test CI band
     fig.add_trace(go.Scatter(
-        x=pred_test_ci_plot.index, y=pred_test_ci_plot["upper"],
+        x=pred_test_ci_plot_disp.index, y=pred_test_ci_plot_disp["upper"],
         mode="lines", line=dict(width=0),
         name=f"Test CI ({int(ci_level*100)}%)",
         showlegend=False
     ))
+
     fig.add_trace(go.Scatter(
-        x=pred_test_ci_plot.index, y=pred_test_ci_plot["lower"],
+        x=pred_test_ci_plot_disp.index, y=pred_test_ci_plot_disp["lower"],
         mode="lines", line=dict(width=0),
         fill="tonexty",
         name=f"Test CI ({int(ci_level*100)}%)"
@@ -297,19 +324,19 @@ with tab_forecast:
 
     # Future forecast
     fig.add_trace(go.Scatter(
-        x=forecast_future.index, y=forecast_future.values,
+        x=forecast_future_disp.index, y=forecast_future_disp.values,
         mode="lines", name="Forecast (future)"
     ))
 
     # Future CI band
     fig.add_trace(go.Scatter(
-        x=forecast_future_ci.index, y=forecast_future_ci["upper"],
+        x=forecast_future_ci_disp.index, y=forecast_future_ci_disp["upper"],
         mode="lines", line=dict(width=0),
         name=f"Forecast CI ({int(ci_level*100)}%)",
         showlegend=False
     ))
     fig.add_trace(go.Scatter(
-        x=forecast_future_ci.index, y=forecast_future_ci["lower"],
+        x=forecast_future_ci_disp.index, y=forecast_future_ci_disp["lower"],
         mode="lines", line=dict(width=0),
         fill="tonexty",
         name=f"Forecast CI ({int(ci_level*100)}%)"
@@ -324,4 +351,3 @@ with tab_forecast:
     )
 
     st.plotly_chart(fig, width="stretch")
-
