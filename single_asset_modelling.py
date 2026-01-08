@@ -14,23 +14,32 @@ def prepare_series_for_arima(
     transform: str = "log",
 ) -> tuple[Series, dict]:
     """
-    Prepare a price series for ARIMA by enforcing a regular time index and handling missing data.
+    Prepare a price time series for ARIMA by cleaning the input and enforcing a regular frequency.
 
-    - Accepts a Series (price series) or a DataFrame with a 'price' column
-    - Ensures DateTimeIndex, sorted and de-duplicated
-    - Builds a regular index:
-        * daily: 'D' if weekends are present (crypto), else 'B' (equities/FX)
-        * weekly: 'W-SUN' if weekends are present, else 'W-FRI'
-    - Handles missing values with a simple policy (interpolate/ffill+bfill)
-    - Optionally applies a transform ('log' or 'none') to stabilize ARIMA fitting
+    Parameters
+    ----------
+    df_raw : DataFrame or Series
+        Raw price data indexed by dates.
+        - If DataFrame: must contain a 'price' column.
+        - If Series: interpreted directly as the price series.
+    interval : str, default '1d'
+        Data frequency expected by the model ('1d' for daily, '1wk' for weekly).
+        The function automatically selects an appropriate calendar:
+        - daily: 'D' if weekends are present (crypto), else 'B' (equities/FX)
+        - weekly: 'W-SUN' if weekends are present, else 'W-FRI'
+    transform : str, default 'log'
+        Transformation applied to stabilize ARIMA fitting:
+        - 'log'  : model is fitted on log-prices (display can be reconverted with exp)
+        - 'none' : model is fitted on raw prices
 
     Returns
     -------
     y : Series
-        Model-ready series with explicit frequency.
+        Model-ready series with a regular DateTimeIndex and explicit frequency.
     info : dict
-        Preparation details (frequency, missing %, fill method, etc.).
+        Preparation metadata (frequency used, missingness introduced, fill method, date range, etc.).
     """
+
     # --- 1) Normalize input to a clean 1D series y0 ---
     if isinstance(df_raw, pd.Series):
         y0 = df_raw.copy()
@@ -130,7 +139,22 @@ def prepare_series_for_arima(
 
 def temporal_train_test_split(y: Series, train_ratio: float = 0.8) -> tuple[Series, Series]:
     """
-    Split a time series into train and test sets while preserving time order (no shuffling).
+    Split a time series into training and testing sets while preserving temporal order.
+
+    Parameters
+    ----------
+    y : Series
+        Time series indexed by dates.
+    train_ratio : float, default 0.8
+        Proportion of observations assigned to the training set.
+        Must be strictly between 0 and 1.
+
+    Returns
+    -------
+    y_train : Series
+        Training subset (earliest observations).
+    y_test : Series
+        Testing subset (most recent observations).
     """
     if not (0.0 < train_ratio < 1.0):
         raise ValueError("train_ratio must be between 0 and 1.")
@@ -151,15 +175,45 @@ def arima_forecast_split(
     maxiter: int = 200,
 ) -> dict:
     """
-    Train/test evaluation + final future forecast with confidence intervals.
+    Perform ARIMA forecasting using a temporal train/test split and produce
+    out-of-sample predictions and future forecasts with confidence intervals.
 
-    - Prepares series (regular index + missing handling + optional log transform)
-    - Temporal split train/test
-    - Fit ARIMA on train -> forecast test (+ CI)
-    - Fit ARIMA on full -> forecast future horizon (+ CI)
+    Parameters
+    ----------
+    df_raw : DataFrame or Series
+        Raw input data indexed by dates.
+        - If DataFrame: must contain a 'price' column.
+        - If Series: interpreted directly as the price series.
+    interval : str, default '1d'
+        Data frequency ('1d' for daily, '1wk' for weekly).
+    order : tuple of int, default (1, 1, 1)
+        ARIMA model order (p, d, q).
+    horizon : int, default 30
+        Number of periods to forecast beyond the last observed date.
+    train_ratio : float, default 0.8
+        Proportion of observations used for model training.
+    ci_level : float, default 0.95
+        Confidence level for prediction intervals.
+    transform : str, default 'log'
+        Transformation applied during series preparation ('log' or 'none').
+    maxiter : int, default 200
+        Maximum number of iterations for likelihood optimization.
 
-    Warnings from statsmodels are silenced (no display in terminal or Streamlit).
+    Returns
+    -------
+    results : dict
+        Dictionary containing all model outputs required for evaluation and display:
+        - y : Series
+        - prep_info : dict
+        - train : Series
+        - test : Series
+        - pred_test : Series
+        - pred_test_ci : DataFrame
+        - forecast_future : Series
+        - forecast_future_ci : DataFrame
+        - model_summary : str
     """
+
     y, prep_info = prepare_series_for_arima(df_raw, interval=interval, transform=transform)
     y_train, y_test = temporal_train_test_split(y, train_ratio=train_ratio)
 

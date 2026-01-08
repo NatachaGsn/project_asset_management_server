@@ -57,27 +57,24 @@ def load_asset(asset: str,
 
 def canonicalise_price_data(df: DataFrame) -> Series:
     """
-    Convert raw loaded asset data into a canonical 1D price series.
-
-    This function guarantees:
-    - a pandas Series
-    - float dtype
-    - datetime index
-    - no duplicated timestamps
-    - sorted index
+    Convert raw asset data into a canonical one-dimensional price series.
 
     Parameters
     ----------
     df : DataFrame
-        DataFrame containing a 'price' column.
+        Input DataFrame containing a 'price' column indexed by dates.
 
     Returns
     -------
-    Series
-        Clean price series ready for all downstream computations.
+    price : Series
+        Clean price series with:
+        - float values
+        - DateTimeIndex
+        - sorted index
+        - no duplicated timestamps
+        - no missing values
     """
     
-
     price = df["price"]
 
     # If price is accidentally a DataFrame (1 column), flatten it
