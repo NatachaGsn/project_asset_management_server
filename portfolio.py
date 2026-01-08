@@ -2,7 +2,7 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
-from typing import List, Dict, Tuple
+from typing import List, Tuple
 
 # =============================================================================
 # DEFAULT CONFIGURATION
@@ -10,78 +10,67 @@ from typing import List, Dict, Tuple
 
 DEFAULT_TICKERS = ["SPY", "TLT", "GLD", "VNQ"]
 TICKER_NAMES = {
-    "SPY": "S&P 500 (Actions US)",
-    "TLT": "Obligations 20+ ans",
-    "GLD": "Or (Gold Trust)",
-    "VNQ": "Immobilier (REITs)",
+    "SPY": "S&P 500 (US Equities)",
+    "TLT": "Treasury Bonds 20+ Years",
+    "GLD": "Gold Trust",
+    "VNQ": "Real Estate (REITs)",
 }
 
 
 # =============================================================================
-# DATA FETCHING
+# DATA LOADING
 # =============================================================================
 
-def get_multi_asset_data(
+def load_multi_asset(
     tickers: List[str] = DEFAULT_TICKERS,
+    start: str = None,
+    end: str = None,
     period: str = "1y",
     interval: str = "1d"
 ) -> DataFrame:
     """
-    Récupère les données de plusieurs actifs via Yahoo Finance.
+    Load price data for multiple assets from Yahoo Finance.
 
     Parameters
     ----------
     tickers : List[str]
-        Liste des tickers à récupérer.
+        List of asset tickers to download.
+    start : str
+        Start date (YYYY-MM-DD). If provided, period is ignored.
+    end : str
+        End date (YYYY-MM-DD).
     period : str
-        Période d'historique (ex: '1y', '6mo', '5d').
+        Historical period (e.g., '1y', '6mo', '5d').
     interval : str
-        Fréquence des données (ex: '1d', '1h').
+        Data frequency ('1d' for daily, '1wk' for weekly).
 
     Returns
     -------
     DataFrame
-        DataFrame avec les prix de clôture de chaque actif en colonnes.
+        DataFrame with adjusted close prices for each asset.
     """
-    df = yf.download(tickers, period=period, interval=interval, progress=False)
-    
-    # yfinance retourne un MultiIndex si plusieurs tickers
+    df = yf.download(
+        tickers,
+        start=start,
+        end=end,
+        period=None if start else period,
+        interval=interval,
+        auto_adjust=False,
+        progress=False
+    )
+
+    if df.empty:
+        raise ValueError("No data downloaded.")
+
+    # Handle MultiIndex columns from yfinance
     if isinstance(df.columns, pd.MultiIndex):
-        df = df["Close"]
+        df = df["Adj Close"]
     else:
-        df = df[["Close"]]
+        df = df[["Adj Close"]]
         df.columns = tickers
-    
-    df = df.dropna()
+
     df.index = pd.to_datetime(df.index)
-    
-    return df
-
-
-def get_asset_info(ticker: str) -> Dict:
-    """
-    Récupère les informations d'un actif (nom, secteur, etc.).
-
-    Parameters
-    ----------
-    ticker : str
-        Ticker de l'actif.
-
-    Returns
-    -------
-    Dict
-        Dictionnaire avec les informations de l'actif.
-    """
-    try:
-        asset = yf.Ticker(ticker)
-        info = asset.info
-        return {
-            "name": info.get("shortName", ticker),
-            "sector": info.get("sector", "N/A"),
-            "currency": info.get("currency", "USD"),
-        }
-    except Exception:
-        return {"name": ticker, "sector": "N/A", "currency": "USD"}
+    return df.dropna()
 
 
 # =============================================================================
@@ -90,119 +79,118 @@ def get_asset_info(ticker: str) -> Dict:
 
 def calculate_returns(prices: DataFrame) -> DataFrame:
     """
-    Calcule les rendements journaliers à partir des prix.
+    Calculate daily returns from price data.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
+        DataFrame of asset prices.
 
     Returns
     -------
     DataFrame
-        DataFrame des rendements journaliers.
+        DataFrame of daily returns.
     """
-    returns = prices.pct_change().dropna()
-    return returns
+    return prices.pct_change().dropna()
 
 
 def calculate_cumulative_returns(returns: DataFrame) -> DataFrame:
     """
-    Calcule les rendements cumulés à partir des rendements journaliers.
+    Calculate cumulative returns from daily returns.
 
     Parameters
     ----------
     returns : DataFrame
-        DataFrame des rendements journaliers.
+        DataFrame of daily returns.
 
     Returns
     -------
     DataFrame
-        DataFrame des rendements cumulés (base 1).
+        DataFrame of cumulative returns (base 1).
     """
-    cumulative = (1 + returns).cumprod()
-    return cumulative
+    return (1 + returns).cumprod()
 
 
 # =============================================================================
 # PORTFOLIO SIMULATION
 # =============================================================================
 
-def calculate_portfolio_weights(
+def calculate_weights(
     n_assets: int,
     method: str = "equal",
     custom_weights: List[float] = None
 ) -> np.ndarray:
     """
-    Calcule les poids du portfolio selon la méthode choisie.
+    Calculate portfolio weights.
 
     Parameters
     ----------
     n_assets : int
-        Nombre d'actifs dans le portfolio.
+        Number of assets in the portfolio.
     method : str
-        Méthode de pondération ('equal' ou 'custom').
+        Weighting method ('equal' or 'custom').
     custom_weights : List[float]
-        Poids personnalisés (utilisé si method='custom').
+        Custom weights (used if method='custom').
 
     Returns
     -------
     np.ndarray
-        Array des poids normalisés (somme = 1).
+        Array of normalised weights (sum = 1).
     """
     if method == "equal":
         weights = np.ones(n_assets) / n_assets
     elif method == "custom" and custom_weights is not None:
         weights = np.array(custom_weights)
-        weights = weights / weights.sum()  # Normalisation
+        weights = weights / weights.sum()
     else:
         weights = np.ones(n_assets) / n_assets
-    
+
     return weights
 
 
 def simulate_portfolio(
     prices: DataFrame,
     weights: np.ndarray,
-    rebalance_frequency: str = "none"
+    rebalance_frequency: str = "daily"
 ) -> Tuple[Series, Series]:
     """
-    Simule la performance d'un portfolio avec les poids donnés.
+    Simulate portfolio performance with given weights.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
+        DataFrame of asset prices.
     weights : np.ndarray
-        Array des poids du portfolio.
+        Array of portfolio weights.
     rebalance_frequency : str
-        Fréquence de rebalancement ('none', 'daily', 'weekly', 'monthly').
+        Rebalancing frequency ('daily', 'weekly', 'monthly', 'none').
 
     Returns
     -------
-    cumulative : Series
-        Série du capital cumulé du portfolio (base 1).
+    equity : Series
+        Portfolio equity curve (base 1).
     returns : Series
-        Série des rendements du portfolio.
+        Portfolio returns series.
     """
     returns = calculate_returns(prices)
-    
-    if rebalance_frequency == "none" or rebalance_frequency == "daily":
-        # Portfolio à poids constants (rebalancé quotidiennement)
+
+    if rebalance_frequency in ["none", "daily"]:
         portfolio_returns = (returns * weights).sum(axis=1)
-    
+
     elif rebalance_frequency == "weekly":
         portfolio_returns = _rebalance_portfolio(returns, weights, "W")
-    
+
     elif rebalance_frequency == "monthly":
         portfolio_returns = _rebalance_portfolio(returns, weights, "ME")
-    
+
     else:
         portfolio_returns = (returns * weights).sum(axis=1)
-    
-    cumulative = (1 + portfolio_returns).cumprod()
-    
-    return cumulative, portfolio_returns
+
+    portfolio_returns.name = "portfolio_returns"
+    equity = (1 + portfolio_returns).cumprod()
+    equity.name = "equity"
+
+    return equity, portfolio_returns
 
 
 def _rebalance_portfolio(
@@ -211,41 +199,22 @@ def _rebalance_portfolio(
     freq: str
 ) -> Series:
     """
-    Fonction interne pour simuler un portfolio avec rebalancement périodique.
-
-    Parameters
-    ----------
-    returns : DataFrame
-        DataFrame des rendements journaliers.
-    target_weights : np.ndarray
-        Poids cibles du portfolio.
-    freq : str
-        Fréquence pandas ('W' pour weekly, 'ME' pour monthly).
-
-    Returns
-    -------
-    Series
-        Série des rendements du portfolio.
+    Internal function to simulate portfolio with periodic rebalancing.
     """
     portfolio_returns = []
     current_weights = target_weights.copy()
-    
-    # Identifier les dates de rebalancement
     rebalance_dates = returns.resample(freq).last().index
-    
+
     for date, row in returns.iterrows():
-        # Rendement du jour avec les poids actuels
         daily_return = (row * current_weights).sum()
         portfolio_returns.append(daily_return)
-        
-        # Mise à jour des poids selon la performance
+
         current_weights = current_weights * (1 + row.values)
         current_weights = current_weights / current_weights.sum()
-        
-        # Rebalancement si nécessaire
+
         if date in rebalance_dates:
             current_weights = target_weights.copy()
-    
+
     return pd.Series(portfolio_returns, index=returns.index)
 
 
@@ -253,222 +222,237 @@ def _rebalance_portfolio(
 # PORTFOLIO METRICS
 # =============================================================================
 
-def calculate_correlation_matrix(prices: DataFrame) -> DataFrame:
+def correlation_matrix(prices: DataFrame) -> DataFrame:
     """
-    Calcule la matrice de corrélation des rendements.
+    Calculate correlation matrix of asset returns.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
+        DataFrame of asset prices.
 
     Returns
     -------
     DataFrame
-        Matrice de corrélation.
+        Correlation matrix.
     """
     returns = calculate_returns(prices)
     return returns.corr()
 
 
-def calculate_covariance_matrix(prices: DataFrame, annualize: bool = True) -> DataFrame:
+def covariance_matrix(prices: DataFrame, annualise: bool = True) -> DataFrame:
     """
-    Calcule la matrice de covariance des rendements.
+    Calculate covariance matrix of asset returns.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
-    annualize : bool
-        Si True, annualise la covariance (x252).
+        DataFrame of asset prices.
+    annualise : bool
+        If True, annualise the covariance (x252).
 
     Returns
     -------
     DataFrame
-        Matrice de covariance.
+        Covariance matrix.
     """
     returns = calculate_returns(prices)
-    cov_matrix = returns.cov()
-    
-    if annualize:
-        cov_matrix = cov_matrix * 252
-    
-    return cov_matrix
+    cov = returns.cov()
+
+    if annualise:
+        cov = cov * 252
+
+    return cov
 
 
-def calculate_portfolio_volatility(
+def portfolio_volatility(
     prices: DataFrame,
     weights: np.ndarray,
-    annualize: bool = True
+    annualise: bool = True
 ) -> float:
     """
-    Calcule la volatilité du portfolio.
+    Calculate portfolio volatility.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
+        DataFrame of asset prices.
     weights : np.ndarray
-        Array des poids du portfolio.
-    annualize : bool
-        Si True, annualise la volatilité.
+        Array of portfolio weights.
+    annualise : bool
+        If True, annualise the volatility.
 
     Returns
     -------
     float
-        Volatilité du portfolio.
+        Portfolio volatility.
     """
-    cov_matrix = calculate_covariance_matrix(prices, annualize=False)
-    portfolio_variance = np.dot(weights.T, np.dot(cov_matrix, weights))
-    portfolio_vol = np.sqrt(portfolio_variance)
-    
-    if annualize:
-        portfolio_vol = portfolio_vol * np.sqrt(252)
-    
-    return portfolio_vol
+    cov = covariance_matrix(prices, annualise=False)
+    port_var = np.dot(weights.T, np.dot(cov, weights))
+    port_vol = np.sqrt(port_var)
+
+    if annualise:
+        port_vol = port_vol * np.sqrt(252)
+
+    return float(port_vol)
 
 
-def calculate_portfolio_expected_return(
+def portfolio_expected_return(
     prices: DataFrame,
     weights: np.ndarray,
-    annualize: bool = True
+    annualise: bool = True
 ) -> float:
     """
-    Calcule le rendement espéré du portfolio.
+    Calculate portfolio expected return.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
+        DataFrame of asset prices.
     weights : np.ndarray
-        Array des poids du portfolio.
-    annualize : bool
-        Si True, annualise le rendement.
+        Array of portfolio weights.
+    annualise : bool
+        If True, annualise the return.
 
     Returns
     -------
     float
-        Rendement espéré du portfolio.
+        Portfolio expected return.
     """
     returns = calculate_returns(prices)
     mean_returns = returns.mean()
-    portfolio_return = np.dot(weights, mean_returns)
-    
-    if annualize:
-        portfolio_return = portfolio_return * 252
-    
-    return portfolio_return
+    port_return = np.dot(weights, mean_returns)
+
+    if annualise:
+        port_return = port_return * 252
+
+    return float(port_return)
 
 
-def calculate_diversification_ratio(
-    prices: DataFrame,
-    weights: np.ndarray
-) -> float:
+def diversification_ratio(prices: DataFrame, weights: np.ndarray) -> float:
     """
-    Calcule le ratio de diversification du portfolio.
-    
-    DR = (somme pondérée des volatilités individuelles) / volatilité du portfolio
-    
-    Un DR > 1 indique un bénéfice de diversification.
+    Calculate portfolio diversification ratio.
+
+    DR = weighted average of individual volatilities / portfolio volatility
+    A DR > 1 indicates diversification benefit.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
+        DataFrame of asset prices.
     weights : np.ndarray
-        Array des poids du portfolio.
+        Array of portfolio weights.
 
     Returns
     -------
     float
-        Ratio de diversification.
+        Diversification ratio.
     """
     returns = calculate_returns(prices)
     individual_vols = returns.std() * np.sqrt(252)
     weighted_avg_vol = np.dot(weights, individual_vols)
-    
-    portfolio_vol = calculate_portfolio_volatility(prices, weights, annualize=True)
-    
-    if portfolio_vol == 0:
+
+    port_vol = portfolio_volatility(prices, weights, annualise=True)
+
+    if port_vol == 0:
         return 1.0
-    
-    return weighted_avg_vol / portfolio_vol
+
+    return float(weighted_avg_vol / port_vol)
 
 
-def max_drawdown(cumulative_series: Series) -> float:
+def max_drawdown(equity: Series) -> float:
     """
-    Calcule le max drawdown à partir d'une série de capital cumulé.
+    Calculate maximum drawdown from equity curve.
 
     Parameters
     ----------
-    cumulative_series : Series
-        Série du capital cumulé (base 1).
+    equity : Series
+        Equity curve (base 1).
 
     Returns
     -------
     float
-        Max drawdown (valeur négative, ex: -0.25 = -25%).
+        Maximum drawdown (negative value, e.g., -0.25 for -25%).
     """
-    running_max = cumulative_series.cummax()
-    drawdown = cumulative_series / running_max - 1.0
-    return drawdown.min()
+    if not isinstance(equity, Series):
+        equity = pd.Series(equity.squeeze())
+
+    eq = equity.astype(float).dropna()
+
+    if len(eq) == 0:
+        return 0.0
+
+    running_max = eq.cummax()
+    dd = (eq - running_max) / running_max
+    return float(dd.min())
 
 
-def sharpe_ratio(returns: Series, risk_free_rate: float = 0.0, periods_per_year: int = 252) -> float:
+def sharpe_ratio(
+    returns: Series,
+    risk_free_rate: float = 0.0,
+    periods_per_year: int = 252
+) -> float:
     """
-    Calcule le Sharpe ratio à partir d'une série de rendements.
+    Calculate annualised Sharpe ratio.
 
     Parameters
     ----------
     returns : Series
-        Série de rendements par période.
+        Portfolio returns series.
     risk_free_rate : float
-        Taux sans risque annualisé.
+        Annualised risk-free rate.
     periods_per_year : int
-        Nombre de périodes par an (252 pour des données journalières).
+        Number of periods per year (252 for daily).
 
     Returns
     -------
     float
-        Sharpe ratio annualisé.
+        Annualised Sharpe ratio.
     """
-    excess_returns = returns - risk_free_rate / periods_per_year
-    mean_ret = excess_returns.mean()
-    std_ret = returns.std()
-    
-    if std_ret == 0:
+    if not isinstance(returns, Series):
+        returns = pd.Series(returns.squeeze())
+
+    r = returns.astype(float).dropna()
+
+    if r.empty:
         return 0.0
-    
-    return np.sqrt(periods_per_year) * mean_ret / std_ret
+
+    excess_returns = r - risk_free_rate / periods_per_year
+    std = r.std()
+
+    if std == 0 or np.isnan(std):
+        return 0.0
+
+    return float(np.sqrt(periods_per_year) * excess_returns.mean() / std)
 
 
-def calculate_individual_metrics(prices: DataFrame) -> DataFrame:
+def individual_metrics(prices: DataFrame) -> DataFrame:
     """
-    Calcule les métriques pour chaque actif individuellement.
+    Calculate metrics for each asset individually.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
+        DataFrame of asset prices.
 
     Returns
     -------
     DataFrame
-        DataFrame avec les métriques par actif.
+        DataFrame with metrics per asset.
     """
     returns = calculate_returns(prices)
     cumulative = calculate_cumulative_returns(returns)
-    
+
     metrics = {}
     for ticker in prices.columns:
         metrics[ticker] = {
-            "Return (Ann.)": returns[ticker].mean() * 252,
-            "Volatility (Ann.)": returns[ticker].std() * np.sqrt(252),
+            "Annual Return": returns[ticker].mean() * 252,
+            "Annual Volatility": returns[ticker].std() * np.sqrt(252),
             "Sharpe Ratio": sharpe_ratio(returns[ticker]),
             "Max Drawdown": max_drawdown(cumulative[ticker]),
             "Final Value": cumulative[ticker].iloc[-1],
         }
-    
+
     return pd.DataFrame(metrics).T
 
 
@@ -479,79 +463,99 @@ def calculate_individual_metrics(prices: DataFrame) -> DataFrame:
 def compare_portfolio_vs_assets(
     prices: DataFrame,
     weights: np.ndarray,
-    rebalance_frequency: str = "none"
+    rebalance_frequency: str = "daily"
 ) -> DataFrame:
     """
-    Compare la performance du portfolio avec les actifs individuels.
+    Compare portfolio performance with individual assets.
 
     Parameters
     ----------
     prices : DataFrame
-        DataFrame des prix de clôture.
+        DataFrame of asset prices.
     weights : np.ndarray
-        Array des poids du portfolio.
+        Array of portfolio weights.
     rebalance_frequency : str
-        Fréquence de rebalancement.
+        Rebalancing frequency.
 
     Returns
     -------
     DataFrame
-        DataFrame avec les rendements cumulés du portfolio et des actifs.
+        DataFrame with cumulative returns of portfolio and assets.
     """
-    # Rendements cumulés des actifs individuels
     returns = calculate_returns(prices)
     cumulative_assets = calculate_cumulative_returns(returns)
-    
-    # Rendement cumulé du portfolio
-    portfolio_cumulative, _ = simulate_portfolio(prices, weights, rebalance_frequency)
-    
-    # Combiner
+
+    portfolio_equity, _ = simulate_portfolio(prices, weights, rebalance_frequency)
+
     comparison = cumulative_assets.copy()
-    comparison["Portfolio"] = portfolio_cumulative
-    
+    comparison["Portfolio"] = portfolio_equity
+
     return comparison
 
 
+def prepare_portfolio_plot(prices: DataFrame, portfolio_equity: Series) -> DataFrame:
+    """
+    Prepare normalised price and portfolio equity for plotting.
+
+    Both series are normalised to base 1 to allow direct comparison.
+
+    Parameters
+    ----------
+    prices : DataFrame
+        Asset price DataFrame.
+    portfolio_equity : Series
+        Portfolio equity curve (base 1).
+
+    Returns
+    -------
+    DataFrame
+        DataFrame with normalised prices and portfolio equity.
+    """
+    returns = calculate_returns(prices)
+    cumulative = calculate_cumulative_returns(returns)
+
+    df_plot = cumulative.copy()
+    df_plot["Portfolio"] = portfolio_equity
+
+    return df_plot
+
+
 # =============================================================================
-# MAIN (pour tester le module)
+# MAIN (for testing)
 # =============================================================================
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("TEST DU MODULE PORTFOLIO")
+    print("PORTFOLIO MODULE TEST")
     print("=" * 60)
-    
-    # Récupérer les données
-    print("\n1. Récupération des données...")
-    prices = get_multi_asset_data()
-    print(f"   Actifs : {list(prices.columns)}")
-    print(f"   Période : {prices.index[0].date()} à {prices.index[-1].date()}")
-    print(f"   Nombre de jours : {len(prices)}")
-    
-    # Matrice de corrélation
-    print("\n2. Matrice de corrélation :")
-    corr = calculate_correlation_matrix(prices)
+
+    print("\n1. Loading data...")
+    prices = load_multi_asset()
+    print(f"   Assets: {list(prices.columns)}")
+    print(f"   Period: {prices.index[0].date()} to {prices.index[-1].date()}")
+    print(f"   Days: {len(prices)}")
+
+    print("\n2. Correlation matrix:")
+    corr = correlation_matrix(prices)
     print(corr.round(3))
-    
-    # Portfolio equal weight
-    print("\n3. Simulation Portfolio Equal Weight...")
-    weights = calculate_portfolio_weights(len(prices.columns), method="equal")
-    print(f"   Poids : {dict(zip(prices.columns, weights.round(3)))}")
-    
-    cumulative, returns = simulate_portfolio(prices, weights)
-    
-    print(f"\n4. Métriques du Portfolio :")
-    print(f"   Rendement annualisé : {calculate_portfolio_expected_return(prices, weights):.2%}")
-    print(f"   Volatilité annualisée : {calculate_portfolio_volatility(prices, weights):.2%}")
-    print(f"   Sharpe Ratio : {sharpe_ratio(returns):.3f}")
-    print(f"   Max Drawdown : {max_drawdown(cumulative):.2%}")
-    print(f"   Ratio de diversification : {calculate_diversification_ratio(prices, weights):.3f}")
-    
-    # Métriques individuelles
-    print("\n5. Métriques par actif :")
-    individual = calculate_individual_metrics(prices)
+
+    print("\n3. Equal weight portfolio simulation...")
+    weights = calculate_weights(len(prices.columns), method="equal")
+    print(f"   Weights: {dict(zip(prices.columns, weights.round(3)))}")
+
+    equity, returns = simulate_portfolio(prices, weights)
+
+    print(f"\n4. Portfolio metrics:")
+    print(f"   Annual Return:      {portfolio_expected_return(prices, weights):.2%}")
+    print(f"   Annual Volatility:  {portfolio_volatility(prices, weights):.2%}")
+    print(f"   Sharpe Ratio:       {sharpe_ratio(returns):.3f}")
+    print(f"   Max Drawdown:       {max_drawdown(equity):.2%}")
+    print(f"   Diversification:    {diversification_ratio(prices, weights):.3f}")
+
+    print("\n5. Individual asset metrics:")
+    individual = individual_metrics(prices)
     print(individual.round(3))
-    
+
     print("\n" + "=" * 60)
-    print("TEST TERMINÉ AVEC SUCCÈS ✓")
+    print("TEST COMPLETED SUCCESSFULLY")
     print("=" * 60)

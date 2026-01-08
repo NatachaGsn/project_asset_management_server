@@ -12,13 +12,13 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from portfolio import (
-    get_multi_asset_data,
-    calculate_portfolio_weights,
+    load_multi_asset,
+    calculate_weights,
     simulate_portfolio,
-    calculate_correlation_matrix,
-    calculate_portfolio_volatility,
-    calculate_portfolio_expected_return,
-    calculate_individual_metrics,
+    correlation_matrix,
+    portfolio_volatility,
+    portfolio_expected_return,
+    individual_metrics,
     sharpe_ratio,
     max_drawdown,
     DEFAULT_TICKERS,
@@ -37,23 +37,23 @@ def generate_report():
     
     # Fetch data
     print(f"[{report_time}] Fetching data...")
-    prices = get_multi_asset_data(DEFAULT_TICKERS, period="1y")
+    prices = load_multi_asset(DEFAULT_TICKERS, period="1y")
     
     # Calculate portfolio metrics
-    weights = calculate_portfolio_weights(len(DEFAULT_TICKERS), method="equal")
-    portfolio_cumulative, portfolio_returns = simulate_portfolio(prices, weights)
+    weights = calculate_weights(len(DEFAULT_TICKERS), method="equal")
+    portfolio_equity, portfolio_returns = simulate_portfolio(prices, weights)
     
     # Metrics
-    port_return = calculate_portfolio_expected_return(prices, weights)
-    port_vol = calculate_portfolio_volatility(prices, weights)
+    port_return = portfolio_expected_return(prices, weights)
+    port_vol = portfolio_volatility(prices, weights)
     port_sharpe = sharpe_ratio(portfolio_returns)
-    port_mdd = max_drawdown(portfolio_cumulative)
+    port_mdd = max_drawdown(portfolio_equity)
     
     # Individual metrics
-    individual = calculate_individual_metrics(prices)
+    individual = individual_metrics(prices)
     
     # Correlation matrix
-    corr_matrix = calculate_correlation_matrix(prices)
+    corr_mat = correlation_matrix(prices)
     
     # Get latest prices
     latest_prices = prices.iloc[-1]
@@ -74,11 +74,11 @@ Weights: Equal Weight ({100/len(DEFAULT_TICKERS):.1f}% each)
 Period: 1 Year
 
 PORTFOLIO METRICS:
-  - Annualized Return:    {port_return:>10.2%}
-  - Annualized Volatility:{port_vol:>10.2%}
+  - Annual Return:        {port_return:>10.2%}
+  - Annual Volatility:    {port_vol:>10.2%}
   - Sharpe Ratio:         {port_sharpe:>10.3f}
   - Max Drawdown:         {port_mdd:>10.2%}
-  - Final Value (base 1): {portfolio_cumulative.iloc[-1]:>10.3f}
+  - Final Value (base 1): {portfolio_equity.iloc[-1]:>10.3f}
 
 --------------------------------------------------------------------------------
                               ASSET PRICES
@@ -103,13 +103,13 @@ PORTFOLIO METRICS:
     
     for ticker in individual.index:
         row = individual.loc[ticker]
-        report += f"{ticker:<10} {row['Return (Ann.)']:>+.2%}      {row['Volatility (Ann.)']:>.2%}       {row['Sharpe Ratio']:>6.3f}    {row['Max Drawdown']:>+.2%}\n"
+        report += f"{ticker:<10} {row['Annual Return']:>+.2%}      {row['Annual Volatility']:>.2%}       {row['Sharpe Ratio']:>6.3f}    {row['Max Drawdown']:>+.2%}\n"
     
     report += f"""
 --------------------------------------------------------------------------------
                           CORRELATION MATRIX
 --------------------------------------------------------------------------------
-{corr_matrix.round(3).to_string()}
+{corr_mat.round(3).to_string()}
 
 ================================================================================
                               END OF REPORT
@@ -131,4 +131,3 @@ PORTFOLIO METRICS:
 
 if __name__ == "__main__":
     generate_report()
-
