@@ -341,20 +341,3 @@ python portfolio.py
 
 ---
 
-## 📝 Git Workflow
-
-### Branches
-- `main` - Production branch
-- `feature/quant_A` - Single Asset development
-- `feature/quant_B` - Portfolio development
-
-### Commit Convention
-```
-type(scope): description
-
-feat(quant-b): add portfolio simulation
-fix(quant-b): correct Sharpe ratio calculation
-refactor(quant-b): translate code to English
-docs(quant-b): add README documentation
-```
-
