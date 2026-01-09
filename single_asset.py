@@ -3,14 +3,41 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
+import streamlit as st
+# ------------------------------------
+# Data
+# ------------------------------------
 
+# autorise reload only every 5 minutes
+@st.cache_data(ttl=300)
 def load_asset(asset: str,
                start: str = None,
                end: str = None,
                period: str = "1y",
                interval: str = "1d") -> DataFrame:
+    
     """
-    Load asset price data from Yahoo Finance in a standardized format.
+    Downloads historical price data for a financial asset from Yahoo Finance
+    and returns a cleaned DataFrame containing adjusted closing prices.
+
+    Parameters
+    ----------
+    asset : str
+        Ticker symbol of the asset (e.g. 'AAPL', 'BTC-USD').
+    start : str, optional
+        Start date of the historical data (format 'YYYY-MM-DD').
+    end : str, optional
+        End date of the historical data (format 'YYYY-MM-DD').
+    period : str, optional
+        Length of the historical period to download (e.g. '1y', '6mo', '5d').
+    interval : str, optional
+        Data frequency (e.g. '1d' for daily, '1wk' for weekly).
+
+    Returns
+    -------
+    DataFrame
+        DataFrame indexed by datetime containing a single column 'price'
+        corresponding to the adjusted closing price.
     """
 
     df = yf.download(
@@ -33,27 +60,24 @@ def load_asset(asset: str,
 
 def canonicalise_price_data(df: DataFrame) -> Series:
     """
-    Convert raw loaded asset data into a canonical 1D price series.
-
-    This function guarantees:
-    - a pandas Series
-    - float dtype
-    - datetime index
-    - no duplicated timestamps
-    - sorted index
+    Convert raw asset data into a canonical one-dimensional price series.
 
     Parameters
     ----------
     df : DataFrame
-        DataFrame containing a 'price' column.
+        Input DataFrame containing a 'price' column indexed by dates.
 
     Returns
     -------
-    Series
-        Clean price series ready for all downstream computations.
+    price : Series
+        Clean price series with:
+        - float values
+        - DateTimeIndex
+        - sorted index
+        - no duplicated timestamps
+        - no missing values
     """
     
-
     price = df["price"]
 
     # If price is accidentally a DataFrame (1 column), flatten it
@@ -72,7 +96,9 @@ def canonicalise_price_data(df: DataFrame) -> Series:
 
     return price
 
-# ---------- Signals (strategies output ONLY signals) ----------
+# ------------------------------------
+# Signals (strategies output ONLY signals)
+# ------------------------------------
 
 def signal_buy_and_hold(price: Series) -> Series:
     """
@@ -127,7 +153,9 @@ def signal_moving_average(
 
     return signal
 
-# ---------- Backtest engine (common for all strategies) ----------
+# ------------------------------------
+# Backtest engine
+# ------------------------------------
 
 def backtest(price: Series, signal: Series) -> tuple[Series, Series]:
     """
@@ -165,10 +193,11 @@ def backtest(price: Series, signal: Series) -> tuple[Series, Series]:
     return equity, strategy_returns
 
 
+# ------------------------------------
+# Metrics
+# ------------------------------------
 
-# ---------- Metrics ----------
-
-def periods_per_year_from_interval(interval: str) -> int:
+def periods_per_year(interval: str, asset_class: str) -> int:
     """
     Map a data frequency to the corresponding number of periods per year.
 
@@ -182,51 +211,36 @@ def periods_per_year_from_interval(interval: str) -> int:
     int
         Number of periods per year used for annualisation.
     """
-    mapping = {
-        "1d": 252,   # trading days per year
-        "1wk": 52    # weeks per year
-    }
-    return mapping.get(interval, 252)
+    if interval == "1wk":
+        return 52
+    if interval == "1d":
+        return 365 if asset_class == "crypto" else 252
+    raise ValueError(f"Unsupported interval: {interval}")
 
-def sharpe_ratio(returns: Series,
-                 interval: str,
-                 risk_free_rate: float = 0.0) -> float:
+def sharpe_ratio(returns: Series, periods_per_year: int) -> float:
     """
     Compute the annualised Sharpe ratio of a return series.
-
-    The annualisation factor is automatically inferred from the
-    data frequency.
 
     Parameters
     ----------
     returns : Series
-        Strategy returns.
-    interval : str
-        Data frequency ('1d' for daily, '1wk' for weekly).
-    risk_free_rate : float
-        Risk-free rate per period (default 0).
+        Periodic return series, indexed by datetime.
+    periods_per_year : int
+        Number of return periods per year (e.g. 252 for daily, 52 for weekly).
 
     Returns
     -------
     float
-        Annualised Sharpe ratio.
+        Annualised Sharpe ratio (risk-free rate assumed to be zero).
     """
-    # number of periods per year
-    periods_per_year = periods_per_year_from_interval(interval)
 
-    # risk free rate per period
-    rf_per_period = risk_free_rate / periods_per_year
-
-    r = (returns.astype(float) - rf_per_period).dropna()
-
+    r = returns.dropna().astype(float)
     if r.empty:
         return 0.0
-
-    std = r.std()
-    if std == 0 or np.isnan(std):
+    vol = r.std(ddof=0)
+    if vol == 0 or np.isnan(vol):
         return 0.0
-    
-    return float((r.mean() / std) * np.sqrt(periods_per_year))
+    return float(r.mean() / vol * np.sqrt(periods_per_year))
 
 def max_drawdown(equity: Series) -> float:
     """
@@ -252,68 +266,61 @@ def max_drawdown(equity: Series) -> float:
 
     return float(drawdown.min())
 
-def annualised_return(returns: Series, interval: str) -> float:
+def annualised_return(equity: Series) -> float:
     """
-    Compute the annualised return from a series of periodic returns.
-
-    The annualisation is adjusted according to the data frequency
-    (daily or weekly).
+    Compute the annualised return (CAGR) of an equity curve.
 
     Parameters
     ----------
-    returns : Series
-        Periodic strategy returns.
-    interval : str
-        Data frequency ('1d' or '1wk').
+    equity : Series
+        Equity curve (base 1), indexed by datetime.
 
     Returns
     -------
     float
-        Annualised return.
+        Annualised return expressed as a decimal (e.g. 0.12 for 12%).
     """
 
-    r = returns.astype(float).dropna()
-    if r.empty:
+    eq = equity.dropna().astype(float)
+    if len(eq) < 2:
         return 0.0
 
-    periods_per_year = periods_per_year_from_interval(interval)
-    total_return = (1.0 + r).prod()
-    n_years = len(r) / periods_per_year
-
-    if n_years <= 0:
+    T = (eq.index[-1] - eq.index[0]).days / 365.25
+    if T <= 0:
         return 0.0
 
-    return total_return ** (1.0 / n_years) - 1.0
+    total = eq.iloc[-1] / eq.iloc[0]
+    if total <= 0:
+        raise ValueError("Equity must remain positive to compute CAGR.")
+
+    return float(total ** (1.0 / T) - 1.0)
 
 
-def annualised_volatility(returns: Series, interval: str) -> float:
+def annualised_volatility(returns: Series, periods_per_year: int) -> float:
     """
     Compute the annualised volatility of a return series.
 
-    Volatility is scaled using the square-root-of-time rule,
-    adjusted for the data frequency.
-
     Parameters
     ----------
     returns : Series
-        Periodic strategy returns.
-    interval : str
-        Data frequency ('1d' or '1wk').
+        Periodic return series, indexed by datetime.
+    periods_per_year : int
+        Number of return periods per year (e.g. 252 for daily, 52 for weekly).
 
     Returns
     -------
     float
-        Annualised volatility.
+        Annualised volatility expressed as a decimal (e.g. 0.18 for 18%).
     """
-    
-    r = returns.astype(float).dropna()
+
+    r = returns.dropna().astype(float)
     if r.empty:
         return 0.0
+    return float(r.std(ddof=0) * np.sqrt(periods_per_year))
 
-    periods_per_year = periods_per_year_from_interval(interval)
-    return r.std() * np.sqrt(periods_per_year)
-
-# -------------------- Main plot ---------------------------
+# ------------------------------------
+# Main plot
+# ------------------------------------
 def prepare_price_equity_plot(price: Series, equity: Series) -> DataFrame:
     """
     Prepare normalised price and equity series for joint plotting.
