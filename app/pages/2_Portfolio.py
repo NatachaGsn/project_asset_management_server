@@ -156,18 +156,20 @@ portfolio_equity, portfolio_returns = simulate_portfolio(prices, weights, rebala
 # =============================================================================
 
 # Info row
-col1, col2, col3, col4 = st.columns(4)
+# Info row
+col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
-    st.metric("📅 Period", f"{prices.index[0].strftime('%Y-%m-%d')} → {prices.index[-1].strftime('%Y-%m-%d')}")
+    st.metric("📅 Start", prices.index[0].strftime('%d/%m/%y'))
 with col2:
-    st.metric("📈 Assets", len(selected_tickers))
+    st.metric("📅 End", prices.index[-1].strftime('%d/%m/%y'))
 with col3:
-    st.metric("📊 Observations", len(prices))
+    st.metric("📈 Assets", len(selected_tickers))
 with col4:
+    st.metric("📊 Observations", len(prices))
+with col5:
     st.metric("🔄 Rebalancing", rebalance_freq.capitalize())
 
 st.divider()
-
 # =============================================================================
 # TAB LAYOUT
 # =============================================================================
